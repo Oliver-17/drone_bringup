@@ -1,0 +1,10 @@
+# === 這個檔案是產生出來的，不要手改 ===
+# 來源：drone_bringup/scripts/make_blank_map.py
+# 房間 5 x 4 m，中心 (0, 0)，每邊外擴 1 m
+# 全部是可通行格，沒有任何障礙物，也不是電子圍籬。
+image: lab_5x4.pgm
+resolution: 0.050000
+origin: [-3.500000, -3.000000, 0.000000]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

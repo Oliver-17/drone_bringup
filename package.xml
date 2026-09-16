@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>drone_bringup</name>
+  <version>0.1.0</version>
+  <description>部署設定：實機／模擬的 launch、參數檔與場地地圖。不含節點程式碼。</description>
+
+  <maintainer email="oliver.920906@gmail.com">oliver</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- bringup 是唯一允許依賴所有其他套件的地方（nav2_bringup、turtlebot3_bringup
+       都是這個道理）。反過來不行：drone_control 或 drone_nav2_apriltag 如果依賴
+       bringup，組員只想拿其中一個包就會被迫連部署設定一起裝。 -->
+  <!-- 實機 launch 直接 include drone_control 的 px4_bridge / nav2 launch -->
+  <exec_depend>drone_control</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

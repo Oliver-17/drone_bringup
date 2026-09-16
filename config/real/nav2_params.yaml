@@ -1,0 +1,244 @@
+# =============================================================================
+#  real/nav2_params.yaml — 實機（飛場 5x4 m、OptiTrack、沒有光達）的 Nav2 參數
+#
+#  從 drone_nav2_apriltag/config/nav2_params.yaml（模擬版）改來。
+#  兩份結構一樣，差異只在下面這張表 —— 改其中一份時，想一下另一份要不要跟著改。
+#
+#    項目                 模擬                  實機（這份）
+#    use_sim_time         true                  false  ← 沒有 Gazebo 就沒有 /clock
+#    地圖解析度            0.1                   0.05   ← 跟 lab_5x4.yaml 一致
+#    光達（obstacle_layer）有                    拿掉   ← 實機目前沒裝
+#    最高速度              0.8 m/s               0.3 m/s
+#    到點容差              0.4 m                 0.2 m
+#    機身半徑              0.5 m                 0.3 m  ← 假設值，實機尺寸未量
+#    區域 costmap          6x6 m                 3x3 m  ← 房間才 5x4 m
+#
+#  ⚠️ use_sim_time 一定要全部 false。實機沒有人發 /clock，設 true 的節點
+#     時鐘會永遠停在 0：TF 時間戳是 0、計時器不會觸發 —— Nav2 看起來啟動了，
+#     但就是不動，而且沒有任何錯誤訊息。
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  全域 costmap
+# -----------------------------------------------------------------------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+
+      update_frequency: 1.0
+      publish_frequency: 1.0
+
+      global_frame: map
+      robot_base_frame: base_link
+
+      # 跟 drone_bringup/maps/lab_5x4.yaml 的 resolution 一致，
+      # 不一致的話 StaticLayer 要重新取樣。
+      resolution: 0.05
+
+      # 初始值，StaticLayer 載入地圖時會自動對齊成地圖大小（7x6 m）
+      rolling_window: false
+      width: 7
+      height: 6
+
+      # ⚠️ 假設值。實機機架還沒量。空地圖沒有障礙物，所以現在不影響規劃，
+      #    之後地圖上有東西時要改成真實的「馬達到馬達對角線 / 2 + 餘裕」。
+      robot_radius: 0.3
+
+      # 沒有 obstacle_layer：實機目前沒有光達。
+      # 留著的話它會等一個永遠不會來的 /scan —— 不會報錯，但沒有意義。
+      plugins: ["static_layer", "inflation_layer"]
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # 空地圖沒有障礙物可膨脹，這個值現在沒有作用。
+        # 模擬用 1.0；5x4 m 的房間用 1.0 會把大半個房間變成「高成本區」，
+        # 等地圖上有東西時先從 0.5 開始試。
+        inflation_radius: 0.5
+        cost_scaling_factor: 3.0
+
+# -----------------------------------------------------------------------------
+#  區域 costmap
+# -----------------------------------------------------------------------------
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+
+      update_frequency: 10.0
+      publish_frequency: 5.0
+
+      global_frame: odom
+      robot_base_frame: base_link
+
+      resolution: 0.05
+      rolling_window: true
+
+      # 3x3 m。依據：最高 0.3 m/s × DWB 往前模擬 2 秒 = 0.6 m，
+      # 視窗半寬 1.5 m 已經夠。模擬的 6x6 m 比整個房間還大。
+      width: 3
+      height: 3
+
+      robot_radius: 0.3
+
+      # 沒有光達就沒有即時障礙物來源，只留膨脹層讓 costmap 有東西可以發布。
+      # DWB 的 BaseObstacle critic 會讀這張圖 —— 全空的圖代表「到處都能走」。
+      plugins: ["inflation_layer"]
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.5
+        cost_scaling_factor: 3.0
+
+# -----------------------------------------------------------------------------
+#  全域路徑規劃
+# -----------------------------------------------------------------------------
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      # 模擬用 0.5；房間小，目標點被擋住時不要跑去半公尺外的替代點
+      tolerance: 0.2
+      use_astar: false
+      # 地圖外是「未知」，這一條把規劃鎖在地圖內（7x6 m）。
+      # ⚠️ 但地圖比房間每邊大 1 m，那一圈仍然可以規劃進去 —— 這不是電子圍籬。
+      allow_unknown: false
+
+# -----------------------------------------------------------------------------
+#  地圖伺服器
+# -----------------------------------------------------------------------------
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    # 實際路徑由 launch 填入
+    yaml_filename: ""
+
+# -----------------------------------------------------------------------------
+#  區域控制
+# -----------------------------------------------------------------------------
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    controller_frequency: 20.0
+
+    # 同模擬：無人機可以橫移，不能用 Nav2 給差速車的 0.5 門檻
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      # 15 秒內至少要移動 0.3 m，否則判定卡住。
+      # 0.3 m/s 起步慢，時間維持模擬的 15 秒。
+      required_movement_radius: 0.3
+      movement_time_allowance: 15.0
+
+    general_goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # 模擬 0.4；5x4 m 房間裡 0.4 m 佔了一成，收緊到 0.2。
+      # 再小的話要考慮動捕與定高的抖動，先不要低於 0.15。
+      xy_goal_tolerance: 0.2
+      yaw_goal_tolerance: 3.14
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: true
+
+      # --- 速度上限：第一次實飛，保守 ---
+      # 0.3 m/s 橫越 5 m 房間約 17 秒，出狀況時來得及反應。
+      min_vel_x: -0.3
+      max_vel_x: 0.3
+      min_vel_y: -0.3
+      max_vel_y: 0.3
+      max_vel_theta: 0.5
+      min_speed_xy: 0.0
+      max_speed_xy: 0.3
+      min_speed_theta: 0.0
+
+      # 加速度減半：室內、第一次飛，寧可起步慢
+      acc_lim_x: 0.5
+      acc_lim_y: 0.5
+      acc_lim_theta: 1.0
+      decel_lim_x: -0.5
+      decel_lim_y: -0.5
+      decel_lim_theta: -1.0
+
+      vx_samples: 20
+      vy_samples: 10
+      vtheta_samples: 10
+      # 2.0 秒 x 0.3 m/s = 0.6 m，小於 local_costmap 半寬 1.5 m
+      sim_time: 2.0
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.3
+      xy_goal_tolerance: 0.2
+      short_circuit_trajectory_evaluation: true
+      stateful: true
+      # 模擬版有 trans_stopped_velocity: 0.25，這裡刻意拿掉：
+      # 它只被 StoppedGoalChecker 讀（nav2_controller/plugins/stopped_goal_checker.hpp:70），
+      # 我們用的是 SimpleGoalChecker，放在 DWB 底下沒有人讀。
+
+      critics: ["Oscillation", "BaseObstacle", "GoalAlign", "PathAlign",
+                "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+
+# -----------------------------------------------------------------------------
+#  行為樹導航 —— RViz 的「2D Goal Pose」由它接收
+# -----------------------------------------------------------------------------
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /MAV1/odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+
+# -----------------------------------------------------------------------------
+#  復原行為 —— 卡住時原地轉、後退
+#
+#  ⚠️ 尚未決定（R5 實飛前要決定）：5x4 m 房間裡「後退」可能退到牆邊。
+#     目前先沿用 Nav2 預設的行為樹。要拿掉的話不能只刪 backup 這個 plugin ——
+#     預設行為樹會呼叫它，伺服器沒有這個動作就會卡在等待。
+# -----------------------------------------------------------------------------
+behavior_server:
+  ros__parameters:
+    use_sim_time: false
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.3
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.5
+    min_rotational_vel: 0.2
+    rotational_acc_lim: 1.0

@@ -1,0 +1,63 @@
+# =============================================================================
+#  real/px4_bridge.yaml — 實機的 PX4 <-> ROS 橋接參數
+#
+#  從 drone_control/config/px4_bridge.yaml（模擬版）改來。差異：
+#
+#    項目                  模擬              實機（這份）
+#    px4_tf_node 的時鐘     sim time          系統時間     ← 沒有 /clock
+#    odom_origin_in_map    [-2, 0, 0]        [0, 0, 0]    ← ⚠️ 假設，R3 要實測
+#    flight_altitude       3.0               0.8
+#    max_speed_xy          1.5               0.5
+#    max_climb_speed       1.0               0.5
+#
+#  ⚠️ flight_altitude 會被 px4_bridge.launch.py 的同名參數蓋掉（預設 3.0！）。
+#     drone_bringup/launch/real_nav2.launch.py 已經明確傳 0.8；
+#     自己用 ros2 launch 開的時候記得加 flight_altitude:=0.8。
+#     而且要和 arm_and_takeoff.py --altitude 一致，否則起飛完成判定永遠不通過。
+# =============================================================================
+
+/**/px4_tf_node:
+  ros__parameters:
+    px4_namespace: "MAV1"
+
+    # 實機沒有 Gazebo，也就沒有 /clock。設 true 的話時鐘停在 0，
+    # TF 時間戳全部是 0，Nav2 會把它們全當成過期資料。
+    use_sim_time: false
+
+    map_frame: "map"
+    odom_frame: "odom"
+    base_frame: "base_link"
+
+    publish_map_to_odom: true
+
+    # ⚠️ 假設值，R3 要實測。
+    # 模擬時 PX4 的原點是 spawn 點，跟世界原點差 (-2, 0)，所以要補。
+    # 實機用動捕融合時，EKF2 的位置直接來自動捕 —— 原點應該就是動捕的原點，
+    # 而 lab_5x4 地圖也是以動捕原點為中心產生的，所以兩者應該重合。
+    # 驗證方法：飛機放在房間正中央，看 vehicle_local_position 的 x/y 是不是接近 0。
+    odom_origin_in_map: [0.0, 0.0, 0.0]
+    odom_origin_yaw: 0.0
+
+    align_yaw_on_start: false
+    initial_map_yaw: 0.0
+
+/**/cmd_vel_to_px4_node:
+  ros__parameters:
+    px4_namespace: "MAV1"
+    use_sim_time: false
+
+    # 定高 0.8 m（飛場決定的高度）
+    flight_altitude: 0.8
+
+    cmd_timeout_s: 0.5
+
+    kp_z: 0.6
+    # 室內、低空，爬升速度上限減半
+    max_climb_speed: 0.5
+
+    # 最後一道防線：比 Nav2 的 0.3 m/s 略高，Nav2 正常時不會碰到，
+    # 參數填錯或有人誤發大數值時才會被夾住。
+    max_speed_xy: 0.5
+    max_yawspeed: 0.5
+
+    publish_rate_hz: 20.0
