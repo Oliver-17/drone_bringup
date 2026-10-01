@@ -12,6 +12,7 @@ install(DIRECTORY maps config launch rviz
 
 install(PROGRAMS
   scripts/make_blank_map.py
+  scripts/frame_probe.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
