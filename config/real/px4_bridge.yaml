@@ -51,6 +51,18 @@
 
     cmd_timeout_s: 0.5
 
+    # ⚠️ 室內一定要 true。
+    # false 的話逾時會銷毀 publisher、切斷 offboard setpoint 串流，PX4 必定觸發
+    # failsafe —— 而室內沒有全球位置，每一條 failsafe 出路都會讓飛機下降：
+    #     COM_OBL_RC_ACT=5 Hold     需要全球位置 → 降級成 Land
+    #     COM_OBL_RC_ACT=0 Position 爬升率看油門桿，而解鎖要求油門在最低點 → 下降
+    # 2026-10-02 實測：arm_and_takeoff.py 退出後飛機進 Position(2)+failsafe，
+    # 五秒後自己上鎖落地。改成 true 之後交接期間變成原地定點，不會觸發 failsafe。
+    #
+    # 要交棒給別的節點（例如精準降落，它會檢查 count_publishers）時，
+    # 呼叫 /MAV1/cmd_vel_to_px4_node/release_hold 明確放手。
+    hold_on_timeout: true
+
     kp_z: 0.6
     # 室內、低空，爬升速度上限減半
     max_climb_speed: 0.5
