@@ -214,15 +214,47 @@ controller_server:
       # 它只被 StoppedGoalChecker 讀（nav2_controller/plugins/stopped_goal_checker.hpp:70），
       # 我們用的是 SimpleGoalChecker，放在 DWB 底下沒有人讀。
 
-      critics: ["Oscillation", "BaseObstacle", "GoalAlign", "PathAlign",
-                "PathDist", "GoalDist"]
+      # ⚠️ 2026-10-06：拿掉 PathAlign 和 GoalAlign，換成 Twirling。
+      #
+      # 為什麼：那兩個 critic 評分的不是「飛機在哪」，而是「機頭前方
+      # forward_point_distance 那一點在哪」——
+      #     dwb_critics/alignment_util.hpp 的 getForwardPose()：
+      #       "Projects the given pose forward the specified distance in the
+      #        x direction. (used in both path_align and dist_align)"
+      #     dwb_critics/path_align.hpp：class PathAlignCritic : public PathDistCritic
+      # 那個投影點永遠在機體 +x，所以「目標在機頭後方」會被重扣分，
+      # 而唯一解除的方法是轉大約 180°。但：
+      #     max_vel_theta 0.5 rad/s → 轉 180° 要 3.5 秒
+      #     sim_time 2.0 s          → DWB 一次只看 2 秒，最多轉 57°
+      # 轉的報酬永遠在視野之外，倒退的扣分卻是立刻的 → 轉一半又放棄，來回擺。
+      #
+      # 2026-10-06 飛場實測三個目標，證據非常乾淨：
+      #     目標在正前方（往東）   5.2 秒走 1.50 m = 0.29 m/s（上限 0.3）✓
+      #     目標在側面（往北）     2.5 秒走 0.82 m = 0.33 m/s          ✓ 橫移沒問題
+      #     目標在後方（往西）    13.8 秒走 2.05 m = 0.15 m/s          ✗ 只有一半
+      #                           航向 74°→91°→71°→51°，白擺了 40°
+      # 「側面很順、只有後方不順」就是前方投影點不對稱的指紋。
+      #
+      # 我們的飛機是全向的、相機朝下、yaw_goal_tolerance 是 3.14（終點朝向不在乎），
+      # 所以「過程中的朝向」也不該被優化。Twirling 正是為這件事寫的 ——
+      #     dwb_critics/twirling.hpp：
+      #       "with holonomic or near-holonomic robots, sometimes a robot spins
+      #        more than you'd like on its way to a goal. This class provides a
+      #        way to assign a penalty purely to rotational velocities."
+      #
+      # ⚠️ 不要改成「提高 max_vel_theta 讓它轉得完」—— cmd_vel_to_px4_node 的
+      #    max_yawspeed 是 0.5，超過會被夾掉，DWB 的預測模型就和現實不符，會更亂。
+      #    那兩個值現在剛好相等，要調必須兩邊一起調。
+      #
+      # 路徑跟隨改成只靠 PathDist（評分飛機自己的位置），不靠 PathAlign。
+      critics: ["Oscillation", "BaseObstacle", "PathDist", "GoalDist", "Twirling"]
       BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
       PathDist.scale: 32.0
       GoalDist.scale: 24.0
+      # Nav2 預設是 0.0（關閉）。沒有它的話偏航完全不影響分數，DWB 會在等分的
+      # vtheta 樣本裡隨便挑一個 → 機頭亂轉。這個值相對於 PathDist 的 32 取的，
+      # 太大會讓它寧可不轉也不修路徑，太小等於沒加 —— SITL 調出來的。
+      Twirling.scale: 10.0
 
 # -----------------------------------------------------------------------------
 #  行為樹導航 —— RViz 的「2D Goal Pose」由它接收
