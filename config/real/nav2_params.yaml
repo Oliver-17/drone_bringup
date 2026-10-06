@@ -12,6 +12,14 @@
 #    到點容差              0.4 m                 0.2 m
 #    機身半徑              0.5 m                 0.3 m  ← 假設值，實機尺寸未量
 #    區域 costmap          6x6 m                 3x3 m  ← 房間才 5x4 m
+#    DWB 取樣數            20/10/10 = 2000       10/10/5 = 500   ← Pi 4 的 CPU
+#    controller_frequency  20 Hz                 10 Hz           ← 同上
+#    bt_loop_duration      10 ms                 50 ms           ← 同上
+#    default_server_timeout 20 ms                200 ms          ← 20 會永久卡死
+#
+#  ⚠️ 最後那四項是 2026-10-05 為了樹莓派加的，模擬端不需要（PC 的 CPU 夠）。
+#     但 default_server_timeout 那一項其實跟 CPU 無關 —— 20 ms 本來就太小，
+#     模擬端只是因為機器快才沒踩到。詳見下面它自己的註解。
 #
 #  ⚠️ use_sim_time 一定要全部 false。實機沒有人發 /clock，設 true 的節點
 #     時鐘會永遠停在 0：TF 時間戳是 0、計時器不會觸發 —— Nav2 看起來啟動了，
@@ -127,7 +135,11 @@ map_server:
 controller_server:
   ros__parameters:
     use_sim_time: false
-    controller_frequency: 20.0
+    # 20.0 → 10.0（2026-10-05）：Pi 4 的 CPU 被 DWB 吃光，實飛時每秒都在喊
+    # 「Control loop missed its desired rate」。0.3 m/s 的飛機慢半拍 = 1.5 cm，
+    # 換到的是 controller_server 的執行緒有空回應 action 的 goal 請求 —— 見下面
+    # bt_navigator 的 default_server_timeout 註解。
+    controller_frequency: 10.0
 
     # 同模擬：無人機可以橫移，不能用 Nav2 給差速車的 0.5 門檻
     min_x_velocity_threshold: 0.001
@@ -177,9 +189,19 @@ controller_server:
       decel_lim_y: -0.5
       decel_lim_theta: -1.0
 
-      vx_samples: 20
+      # 20/10/10 = 2000 條 → 10/10/5 = 500 條（2026-10-05，Oliver 決定先砍到 500
+      # 而不是更激進的 125）。每一拍要把每條軌跡往前模擬 sim_time 再用 6 個 critic
+      # 打分，2000 條 × 20 Hz 是 Pi 4 撐不住的主因。
+      #
+      # 為什麼這樣切：
+      #   vx 和 vy 改成對稱（都 10）—— 四旋翼是全向的，沒有理由「往前」的解析度比
+      #     「橫移」高一倍。原本 20/10 的不對稱是從地面車預設抄來的（差速車不能橫移，
+      #      vy_samples 通常是 1）。
+      #   vθ 砍最多（10→5）—— yaw_goal_tolerance 是 3.14，代表完全不在乎最終機頭
+      #     朝向，而 max_vel_theta 只有 0.5。這一軸最不重要。
+      vx_samples: 10
       vy_samples: 10
-      vtheta_samples: 10
+      vtheta_samples: 5
       # 2.0 秒 x 0.3 m/s = 0.6 m，小於 local_costmap 半寬 1.5 m
       sim_time: 2.0
       linear_granularity: 0.05
@@ -211,8 +233,30 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     odom_topic: /MAV1/odom
-    bt_loop_duration: 10
-    default_server_timeout: 20
+    # 10 → 50 毫秒（2026-10-05）：原本等於行為樹 tick 100 Hz，實飛 log 裡
+    # 788 行有 335 行（42%）是「Behavior Tree tick rate 100.00 was exceeded」。
+    # 0.3 m/s 的飛機不需要 100 Hz 的決策頻率。
+    bt_loop_duration: 50
+
+    # ⚠️ 20 → 200 毫秒（2026-10-05）。這個值太小會讓 Nav2 永久卡死。
+    #
+    # 單位是毫秒（nav2_behavior_tree/bt_action_server_impl.hpp:119-120），管的是
+    # 「bt_navigator 下單給 planner/controller 之後，等對方回『我收到了』等多久」。
+    # ROS 2 預設 executor 是單執行緒：controller_server 正在跑 DWB 時，那句「收到」
+    # 就卡在 callback 佇列裡出不來。
+    #
+    # 超時的處理是把 goal handle 丟掉（bt_action_node.hpp:219-228 的
+    # future_goal_handle_.reset()），但那張單晚一點真的會送到 controller_server
+    # 並且被接受 → server 手上有孤兒 goal、BT 手上沒 handle →
+    # BT 重試送新單 → server abort 舊的（印「Aborting handle」）→ BT 又等不到 ack
+    # → 無限循環，每秒一次，而且只有重開 Nav2 才會好。
+    #
+    # 2026-10-02 實飛：第 1 個目標成功、第 2 個成功但已出現 compute_path_to_pose
+    # 的 timeout、第 3 個目標開始就永久卡死。
+    #
+    # 200 ms 的代價：延後 180 ms 才判定失敗 = 0.3 m/s 下 5 cm，無實際影響。
+    # 參考：同飛場的 px4_nav2_bridge 在一樣的 Pi 4 上用 100。
+    default_server_timeout: 200
     wait_for_service_timeout: 1000
 
 # -----------------------------------------------------------------------------
